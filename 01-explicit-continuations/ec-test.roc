@@ -3,9 +3,11 @@ app "ec-test"
     imports []
     provides [main] to pf
 
-main : (I32 -> (I32 -> I32))
+main : I32 -> (I32 -> (I32 -> I32))
 main =
     \x ->
-        z = x - 2
+        a = x - 1
         \y ->
-            x + y + z
+            b = y + a
+            \z ->
+                a + b + x + y + z
