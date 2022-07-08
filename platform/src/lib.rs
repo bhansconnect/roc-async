@@ -5,6 +5,8 @@ use core::ffi::c_void;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use libc;
 use roc_std::RocStr;
+use std::borrow::BorrowMut;
+use std::default;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
@@ -26,8 +28,28 @@ extern "C" {
     fn size_Fx_result() -> i64;
 }
 
+tokio::task_local! {
+    static ARENA: bumpalo::Bump;
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn roc_alloc(size: usize, _alignment: u32) -> *mut c_void {
+    tokio::task_local! {
+        static TMP: std::cell::RefCell<bumpalo::Bump>;
+    }
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(TMP.scope(Default::default(), async move {
+        assert_eq!(
+            *TMP.with(|cell| {
+                let arena = cell.borrow_mut();
+                let x = arena.alloc("hello_world");
+                x as *const _
+            }),
+            "hello_world"
+        );
+        println!("This ran!!!");
+    }));
+    println!("Called roc_alloc");
     libc::malloc(size)
 }
 

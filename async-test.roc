@@ -5,5 +5,5 @@ app "async-test"
 
 main : Task.Task {} []
 main =
-    _ <- Task.await (Stdout.line "Hi")
+    _ <- Task.await (Stdout.line (Str.concat "Hello, allocating " "world!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"))
     Task.succeed {}
