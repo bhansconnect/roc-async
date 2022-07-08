@@ -2,13 +2,12 @@
 
 use core::alloc::Layout;
 use core::ffi::c_void;
-use core::mem::{ManuallyDrop, MaybeUninit};
+use core::mem::MaybeUninit;
 use libc;
 use roc_std::RocStr;
-use std::borrow::BorrowMut;
-use std::default;
 use std::ffi::CStr;
 use std::os::raw::c_char;
+use tokio::runtime::Runtime;
 
 extern "C" {
     #[link_name = "roc__mainForHost_1_exposed_generic"]
@@ -31,24 +30,26 @@ extern "C" {
 tokio::task_local! {
     static ARENA: bumpalo::Bump;
 }
+static mut RT: MaybeUninit<Runtime> = MaybeUninit::uninit();
 
 #[no_mangle]
 pub unsafe extern "C" fn roc_alloc(size: usize, _alignment: u32) -> *mut c_void {
     tokio::task_local! {
         static TMP: std::cell::RefCell<bumpalo::Bump>;
     }
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime.block_on(TMP.scope(Default::default(), async move {
-        assert_eq!(
-            *TMP.with(|cell| {
-                let arena = cell.borrow_mut();
-                let x = arena.alloc("hello_world");
-                x as *const _
-            }),
-            "hello_world"
-        );
-        println!("This ran!!!");
-    }));
+    // RT.assume_init_ref()
+    //     .block_on(TMP.scope(Default::default(), async move {
+    //         assert_eq!(
+    //             *TMP.with(|cell| {
+    //                 let arena = cell.borrow_mut();
+    //                 let x = arena.alloc("hello_world");
+    //                 println!("{}", arena.allocated_bytes());
+    //                 x as *const _
+    //             }),
+    //             "hello_world"
+    //         );
+    //         println!("This ran!!!");
+    //     }));
     println!("Called roc_alloc");
     libc::malloc(size)
 }
@@ -91,8 +92,7 @@ pub unsafe extern "C" fn roc_memset(dst: *mut c_void, c: i32, n: usize) -> *mut 
     libc::memset(dst, c, n)
 }
 
-#[no_mangle]
-pub extern "C" fn rust_main() -> i32 {
+fn run_roc_main() {
     let size = unsafe { roc_main_size() } as usize;
     let layout = Layout::array::<u8>(size).unwrap();
 
@@ -108,7 +108,21 @@ pub extern "C" fn rust_main() -> i32 {
 
         result
     };
+}
 
+#[no_mangle]
+pub extern "C" fn rust_main() -> i32 {
+    unsafe {
+        RT = MaybeUninit::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap(),
+        );
+        dbg!(RT.assume_init_ref()).block_on(async {
+            run_roc_main();
+        });
+    }
     // Exit code
     0
 }
