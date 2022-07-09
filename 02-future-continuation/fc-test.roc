@@ -6,4 +6,4 @@ app "fc-test"
 main : Effect {future: Future, cont: (I32 -> I32)}
 main =
     future <- Effect.after Effect.readData
-    Effect.always {future, cont: \x -> x + 1}
+    Effect.always {future, cont: \x -> x * x}

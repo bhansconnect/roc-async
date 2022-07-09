@@ -27,6 +27,10 @@ extern "C" {
 
     #[link_name = "roc__mainForHost_1_Fx_result_size"]
     fn size_Fx_result() -> i64;
+
+    #[link_name = "roc__mainForHost_1_Cont_caller"]
+    fn call_Cont(flags: *const i32, closure_data: *const u8, output: *mut i32);
+
 }
 
 static mut RT: MaybeUninit<Runtime> = MaybeUninit::uninit();
@@ -73,27 +77,6 @@ pub unsafe extern "C" fn roc_memcpy(dst: *mut c_void, src: *mut c_void, n: usize
 pub unsafe extern "C" fn roc_memset(dst: *mut c_void, c: i32, n: usize) -> *mut c_void {
     libc::memset(dst, c, n)
 }
-type FuturePtr = *mut (dyn Future<Output = i32> + Send);
-type BoxFuture = Box<dyn Future<Output = i32> + Send>;
-
-fn run_roc_main() -> BoxFuture {
-    let size = unsafe { roc_main_size() } as usize;
-    let layout = Layout::array::<u8>(size).unwrap();
-
-    unsafe {
-        // TODO allocate on the stack if it's under a certain size
-        let buffer = std::alloc::alloc(layout);
-
-        roc_main(buffer);
-
-        let result = call_the_closure(buffer);
-
-        std::alloc::dealloc(buffer, layout);
-
-        result
-    }
-}
-
 #[no_mangle]
 pub extern "C" fn rust_main() -> i32 {
     unsafe {
@@ -110,9 +93,10 @@ pub extern "C" fn rust_main() -> i32 {
             for i in 0..n {
                 handles.push(tokio::spawn(async move {
                     let start = Instant::now();
-                    Pin::from(run_roc_main()).await;
+                    let val = Pin::from(run_roc_main()).await;
+                    let out = call_continuation_closure(val);
                     let elapsed_time = start.elapsed().as_millis();
-                    println!("async roc task {} took {}ms and returned ???", i, elapsed_time);
+                    println!("async roc task {} took {}ms and returned {}", i, elapsed_time, out);
                 }));
             }
             futures::future::join_all(handles).await;
@@ -122,7 +106,28 @@ pub extern "C" fn rust_main() -> i32 {
     0
 }
 
-unsafe fn call_the_closure(closure_data_ptr: *const u8) -> BoxFuture {
+type FuturePtr = *mut (dyn Future<Output = i32> + Send);
+type BoxFuture = Box<dyn Future<Output = i32> + Send>;
+
+fn run_roc_main() -> BoxFuture {
+    let size = unsafe { roc_main_size() } as usize;
+    let layout = Layout::array::<u8>(size).unwrap();
+
+    unsafe {
+        // TODO allocate on the stack if it's under a certain size
+        let buffer = std::alloc::alloc(layout);
+
+        roc_main(buffer);
+
+        let result = call_main_closure(buffer);
+
+        std::alloc::dealloc(buffer, layout);
+
+        result
+    }
+}
+
+unsafe fn call_main_closure(closure_data_ptr: *const u8) -> BoxFuture {
     let size = size_Fx_result() as usize;
     let layout = Layout::array::<u8>(size).unwrap();
     let buffer = std::alloc::alloc(layout) as *mut u8;
@@ -140,6 +145,16 @@ unsafe fn call_the_closure(closure_data_ptr: *const u8) -> BoxFuture {
     assert_eq!(size, std::mem::size_of_val(&out));
     std::alloc::dealloc(buffer as *mut u8, layout);
 
+    out
+}
+
+unsafe fn call_continuation_closure(x: i32) -> i32 {
+    let mut out = 0;
+    call_Cont(
+        &x as *const i32,
+        MaybeUninit::uninit().as_ptr(),
+        &mut out as *mut i32,
+    );
     out
 }
 
