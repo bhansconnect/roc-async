@@ -1,8 +1,8 @@
 hosted Effect
-    exposes [Effect, after, map, always, forever, loop, sleep]
+    exposes [Effect, after, map, always, forever, loop, readData]
     imports []
     generates Effect with [after, map, always, forever, loop]
 
 Future := Nat
 
-sleep : Effect Future
+readData : Effect Future

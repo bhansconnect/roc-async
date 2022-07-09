@@ -132,7 +132,7 @@ unsafe fn call_the_closure(closure_data_ptr: *const u8) -> Box<Sleep> {
 }
 
 #[no_mangle]
-pub extern "C" fn roc_fx_sleep() -> *mut Sleep {
+pub extern "C" fn roc_fx_readData() -> *mut Sleep {
     use tokio::time::{sleep, Duration};
     Box::into_raw(Box::new(sleep(Duration::from_millis(1000))))
 }
