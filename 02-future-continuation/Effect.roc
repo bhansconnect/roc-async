@@ -3,8 +3,7 @@ hosted Effect
     imports []
     generates Effect with [after, map, always, forever, loop]
 
-# dyn Future<Output = i32> is in 2 registers for some reason.
-# probably due to dyn it passes a pointer and size?
+# *mut dyn Future<Output = i32> is in 2 registers because it is a fat pointer with a size.
 Future := U128
 
 readData : Effect Future

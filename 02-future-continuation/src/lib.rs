@@ -88,8 +88,9 @@ pub extern "C" fn rust_main() -> i32 {
         );
         RT.assume_init_ref().block_on(async {
             let n = 20;
+            println!("Roc + Tokio with an async host effect function");
+            println!("Each task will grab a value that takes 1s +/- 50ms to load\n");
             println!("Starting {} async roc tasks on a single thread...", n);
-            println!("Each task will grab a value that takes 1s +/- 50ms to load");
             let mut handles = vec![];
             for i in 0..n {
                 handles.push(tokio::spawn(async move {
@@ -97,7 +98,7 @@ pub extern "C" fn rust_main() -> i32 {
                     let val = Pin::from(run_roc_main()).await;
                     let out = call_continuation_closure(val);
                     let elapsed_time = start.elapsed().as_millis();
-                    println!("async roc task {} took {}ms and returned {}", i, elapsed_time, out);
+                    println!("async roc task {:2} took {:4}ms and returned {:3}", i, elapsed_time, out);
                 }));
             }
             futures::future::join_all(handles).await;
