@@ -89,6 +89,7 @@ pub extern "C" fn rust_main() -> i32 {
         RT.assume_init_ref().block_on(async {
             let n = 20;
             println!("Starting {} async roc tasks on a single thread...", n);
+            println!("Each task will grab a value that takes 1s +/- 50ms to load");
             let mut handles = vec![];
             for i in 0..n {
                 handles.push(tokio::spawn(async move {
@@ -165,11 +166,11 @@ pub extern "C" fn roc_fx_readData() -> FuturePtr {
     use tokio::time::{sleep, Duration};
     Box::into_raw(Box::new(async {
         use rand::{SeedableRng, Rng};
-        let x = unsafe{DATA};
-        unsafe{DATA = x + 1;}
         let mut rng = rand::rngs::StdRng::from_entropy();
         let time = 1000 + rng.gen_range(-50..50);
         sleep(Duration::from_millis(time as u64)).await;
+        let x = unsafe{DATA};
+        unsafe{DATA = x + 1;}
         x
     }))
 }
