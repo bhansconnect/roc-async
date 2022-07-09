@@ -1,9 +1,9 @@
 #![allow(non_snake_case)]
+#![allow(clippy::missing_safety_doc)]
 
 use core::alloc::Layout;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
-use libc;
 use std::ffi::CStr;
 use std::pin::Pin;
 use std::os::raw::c_char;
@@ -108,6 +108,13 @@ pub extern "C" fn rust_main() -> i32 {
     0
 }
 
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct TraitObject {
+    pub data: *mut (),
+    pub vtable: *mut (),
+}
+
 type FuturePtr = *mut (dyn Future<Output = i32> + Send);
 type BoxFuture = Box<dyn Future<Output = i32> + Send>;
 
@@ -163,9 +170,9 @@ unsafe fn call_continuation_closure(x: i32) -> i32 {
 
 static mut DATA: i32 = 0;
 #[no_mangle]
-pub extern "C" fn roc_fx_readData() -> FuturePtr {
+pub extern "C" fn roc_fx_readData() -> TraitObject {
     use tokio::time::{sleep, Duration};
-    Box::into_raw(Box::new(async {
+    let ptr : FuturePtr = Box::into_raw(Box::new(async {
         use rand::{SeedableRng, Rng};
         let mut rng = rand::rngs::StdRng::from_entropy();
         let time = 1000 + rng.gen_range(-50..50);
@@ -173,5 +180,6 @@ pub extern "C" fn roc_fx_readData() -> FuturePtr {
         let x = unsafe{DATA};
         unsafe{DATA = x + 1;}
         x
-    }))
+    }));
+    unsafe {std::mem::transmute(ptr)}
 }
