@@ -104,15 +104,15 @@ pub extern "C" fn rust_main() -> i32 {
                 .unwrap(),
         );
         RT.assume_init_ref().block_on(async {
-            let n = 10;
-            println!("Starting {} async tasks...", n);
+            let n = 20;
+            println!("Starting {} async roc tasks on a single thread...", n);
             let mut handles = vec![];
             for i in 0..n {
                 handles.push(tokio::spawn(async move {
                     let start = Instant::now();
                     Pin::from(run_roc_main()).await;
                     let elapsed_time = start.elapsed().as_millis();
-                    println!("async task {} took {}ms and returned ???", i, elapsed_time);
+                    println!("async roc task {} took {}ms and returned ???", i, elapsed_time);
                 }));
             }
             futures::future::join_all(handles).await;
