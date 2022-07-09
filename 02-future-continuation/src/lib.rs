@@ -8,8 +8,8 @@ use std::ffi::CStr;
 use std::pin::Pin;
 use std::os::raw::c_char;
 use tokio::runtime::Runtime;
-use tokio::time::Sleep;
 use std::time::Instant;
+use std::future::Future;
 
 extern "C" {
     #[link_name = "roc__mainForHost_1_exposed_generic"]
@@ -73,8 +73,10 @@ pub unsafe extern "C" fn roc_memcpy(dst: *mut c_void, src: *mut c_void, n: usize
 pub unsafe extern "C" fn roc_memset(dst: *mut c_void, c: i32, n: usize) -> *mut c_void {
     libc::memset(dst, c, n)
 }
+type FuturePtr = *mut (dyn Future<Output = i32> + Send);
+type BoxFuture = Box<dyn Future<Output = i32> + Send>;
 
-fn run_roc_main() -> Box<Sleep> {
+fn run_roc_main() -> BoxFuture {
     let size = unsafe { roc_main_size() } as usize;
     let layout = Layout::array::<u8>(size).unwrap();
 
@@ -96,24 +98,31 @@ fn run_roc_main() -> Box<Sleep> {
 pub extern "C" fn rust_main() -> i32 {
     unsafe {
         RT = MaybeUninit::new(
-            tokio::runtime::Builder::new_multi_thread()
+            tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap(),
         );
         RT.assume_init_ref().block_on(async {
-            println!("Starting 1 second async sleep...");
-            let start = Instant::now();
-            Pin::from(run_roc_main()).await;
-            let elapsed_time = start.elapsed().as_millis();
-            println!("Roc main took {}ms", elapsed_time);
+            let n = 10;
+            println!("Starting {} async tasks...", n);
+            let mut handles = vec![];
+            for i in 0..n {
+                handles.push(tokio::spawn(async move {
+                    let start = Instant::now();
+                    Pin::from(run_roc_main()).await;
+                    let elapsed_time = start.elapsed().as_millis();
+                    println!("async task {} took {}ms and returned ???", i, elapsed_time);
+                }));
+            }
+            futures::future::join_all(handles).await;
         });
     }
     // Exit code
     0
 }
 
-unsafe fn call_the_closure(closure_data_ptr: *const u8) -> Box<Sleep> {
+unsafe fn call_the_closure(closure_data_ptr: *const u8) -> BoxFuture {
     let size = size_Fx_result() as usize;
     let layout = Layout::array::<u8>(size).unwrap();
     let buffer = std::alloc::alloc(layout) as *mut u8;
@@ -125,14 +134,21 @@ unsafe fn call_the_closure(closure_data_ptr: *const u8) -> Box<Sleep> {
         buffer as *mut u8,
     );
 
-    let out = Box::from_raw(*(buffer as *mut *mut Sleep));
+    let out = Box::from_raw(*(buffer as *mut FuturePtr));
     std::alloc::dealloc(buffer as *mut u8, layout);
 
     out
 }
 
+
+static mut DATA: i32 = 0;
 #[no_mangle]
-pub extern "C" fn roc_fx_readData() -> *mut Sleep {
+pub extern "C" fn roc_fx_readData() -> FuturePtr {
     use tokio::time::{sleep, Duration};
-    Box::into_raw(Box::new(sleep(Duration::from_millis(1000))))
+    Box::into_raw(Box::new(async {
+        let x = unsafe{DATA};
+        unsafe{DATA = x + 1;}
+        sleep(Duration::from_millis(1000)).await;
+        x
+    }))
 }

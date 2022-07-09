@@ -19,6 +19,7 @@ path = "src/main.rs"
 [dependencies]
 roc_std = { path = "../../roc/crates/roc_std" }
 tokio = { version = "1.19.2", features = ["full"] }
+futures = "0.3.21"
 libc = "0.2"
 
 [workspace]
