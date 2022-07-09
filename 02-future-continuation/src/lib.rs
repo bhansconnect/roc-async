@@ -93,8 +93,8 @@ pub extern "C" fn rust_main() -> i32 {
             println!("Starting {} async roc tasks on a single thread...", n);
             let mut handles = vec![];
             for i in 0..n {
+                let start = Instant::now();
                 handles.push(tokio::spawn(async move {
-                    let start = Instant::now();
                     let val = Pin::from(run_roc_main()).await;
                     let out = call_continuation_closure(val);
                     let elapsed_time = start.elapsed().as_millis();
