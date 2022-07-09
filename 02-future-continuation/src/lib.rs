@@ -164,9 +164,12 @@ static mut DATA: i32 = 0;
 pub extern "C" fn roc_fx_readData() -> FuturePtr {
     use tokio::time::{sleep, Duration};
     Box::into_raw(Box::new(async {
+        use rand::{SeedableRng, Rng};
         let x = unsafe{DATA};
         unsafe{DATA = x + 1;}
-        sleep(Duration::from_millis(1000)).await;
+        let mut rng = rand::rngs::StdRng::from_entropy();
+        let time = 1000 + rng.gen_range(-50..50);
+        sleep(Duration::from_millis(time as u64)).await;
         x
     }))
 }
