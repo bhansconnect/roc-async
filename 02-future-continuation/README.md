@@ -9,7 +9,8 @@ If async does not work correctly, we should see a tail end of functions that tak
 We will use the tokio current thread executor because it only runs on a single thread.
 
 
-A note on cost. Currently this is using fat pointer boxed dyn Future's.
+A note on cost. Currently this is using fat pointer boxed dyn Future's
+(I was hoping async ffi would fix this, but it still boxes a pointer and has that cost).
 As such, every time we call a host async effect function, we have to allocate a box on the heap.
 I guess long term potentially these could be bump allocated to minimize the cost, but it is definitely an extra cost.
 Though bump allocation may not be possible due to getting a task local requiring running asyncronously.
