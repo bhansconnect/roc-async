@@ -134,7 +134,10 @@ unsafe fn call_the_closure(closure_data_ptr: *const u8) -> BoxFuture {
         buffer as *mut u8,
     );
 
+    // Because Roc is not capturing anything the return is just the future.
+    // If the roc code is change to capture a value, we would need to save the rest of the buffer.
     let out = Box::from_raw(*(buffer as *mut FuturePtr));
+    assert_eq!(size, std::mem::size_of_val(&out));
     std::alloc::dealloc(buffer as *mut u8, layout);
 
     out
