@@ -68,7 +68,7 @@ pub unsafe extern "C" fn roc_memset(dst: *mut c_void, c: i32, n: usize) -> *mut 
 
 #[no_mangle]
 pub extern "C" fn rust_main() -> i32 {
-    let data = [21, 15, -9];
+    let data = [21, 15, -9, 12, 32];
     unsafe {
         let mut cont_ptr: *mut u8 = core::ptr::null::<u8>() as *mut u8;
 
@@ -77,13 +77,13 @@ pub extern "C" fn rust_main() -> i32 {
         let mut i = 0;
         // Note: zero only works here cause tag zero happens to be Done.
         while get_tag(cont_ptr) != 0 {
+            println!("Roc wants more data. Passing in {}.", data[i]);
             cont_ptr = call_morecont_closure(cont_ptr, data[i]);
             i += 1;
         }
 
         let out = *(remove_tag(cont_ptr) as *const i32);
-        println!("From input of: {:?}", data);
-        println!("Got an output of: {}", out);
+        println!("Roc produced an output of {}.", out);
     };
     // Exit code
     0
