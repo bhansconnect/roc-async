@@ -4,6 +4,6 @@ app "nfc-test"
     provides [main] to pf
 
 main =
-    Effect.always (Done 12)
-    # future <- Effect.after Effect.readData
-    # Effect.always (More future (\x -> Effect.always (Done (x * x))))
+    # Effect.always (Done 12)
+    future <- Effect.after Effect.readData
+    Effect.always (More future (\x -> Effect.always (Done (x * x))))
