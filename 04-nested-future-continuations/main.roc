@@ -1,9 +1,9 @@
 platform "cli"
-    requires {} { main : Effect {future: Future, cont: (I32 -> I32)} }
+    requires {} { main : _ }
     exposes []
     packages {}
     imports [Effect.{ Effect, Future }]
     provides [mainForHost]
 
-mainForHost : Effect {future: Future, cont: (I32 -> I32) as Cont} as Fx
+mainForHost : Effect [More Future ((I32 -> Effect Continuation) as MoreCont), Done I32] as Continuation
 mainForHost = main

@@ -18,19 +18,20 @@ extern "C" {
     #[link_name = "roc__mainForHost_size"]
     fn roc_main_size() -> i64;
 
-    #[link_name = "roc__mainForHost_1_Fx_caller"]
-    fn call_Fx(flags: *const u8, closure_data: *const u8, output: *mut u8);
+    #[link_name = "roc__mainForHost_1_Continuation_result_size"]
+    fn size_Continuation_result() -> i64;
 
-    #[allow(dead_code)]
-    #[link_name = "roc__mainForHost_1_Fx_size"]
-    fn size_Fx() -> i64;
+    #[link_name = "roc__mainForHost_1_Continuation_caller"]
+    fn call_Cont(flags: *const u8, closure_data: *const u8, output: *mut u8);
 
-    #[link_name = "roc__mainForHost_1_Fx_result_size"]
-    fn size_Fx_result() -> i64;
+    #[link_name = "roc__mainForHost_1_MoreCont_caller"]
+    fn call_MoreCont(flags: *const i32, closure_data: *const u8, output: *mut *mut u8);
 
-    #[link_name = "roc__mainForHost_1_Cont_caller"]
-    fn call_Cont(flags: *const i32, closure_data: *const u8, output: *mut i32);
+    #[link_name = "roc__mainForHost_1_MoreCont_size"]
+    fn size_MoreCont() -> i64;
 
+    #[link_name = "roc__mainForHost_1_MoreCont_result_size"]
+    fn size_MoreCont_result() -> i64;
 }
 
 static mut RT: MaybeUninit<Runtime> = MaybeUninit::uninit();
@@ -95,10 +96,11 @@ pub extern "C" fn rust_main() -> i32 {
             for i in 0..n {
                 let start = Instant::now();
                 handles.push(tokio::spawn(async move {
-                    let val = Pin::from(run_roc_main()).await;
-                    let out = call_continuation_closure(val);
-                    let elapsed_time = start.elapsed().as_millis();
-                    println!("async roc task {:2} took {:4}ms and returned {:3}", i, elapsed_time, out);
+                    run_roc_main();
+                    // let val = Pin::from(run_roc_main()).await;
+                    // let out = call_continuation_closure(val);
+                    // let elapsed_time = start.elapsed().as_millis();
+                    // println!("async roc task {:2} took {:4}ms and returned {:3}", i, elapsed_time, out);
                 }));
             }
             futures::future::join_all(handles).await;
@@ -118,7 +120,7 @@ pub struct TraitObject {
 type FuturePtr = *mut (dyn Future<Output = i32> + Send);
 type BoxFuture = Box<dyn Future<Output = i32> + Send>;
 
-fn run_roc_main() -> BoxFuture {
+fn run_roc_main() {
     let size = unsafe { roc_main_size() } as usize;
     let layout = Layout::array::<u8>(size).unwrap();
 
@@ -127,45 +129,58 @@ fn run_roc_main() -> BoxFuture {
         let buffer = std::alloc::alloc(layout);
 
         roc_main(buffer);
-
-        let result = call_main_closure(buffer);
-
+        let cont_ptr = call_continuation_closure(buffer);
         std::alloc::dealloc(buffer, layout);
 
-        result
+        dbg!(core::slice::from_raw_parts(remove_tag(cont_ptr), size_Continuation_result() as usize));
     }
 }
 
-unsafe fn call_main_closure(closure_data_ptr: *const u8) -> BoxFuture {
-    let size = size_Fx_result() as usize;
+unsafe fn call_continuation_closure(closure_data_ptr: *mut u8) -> *mut u8 {
+    let size = size_Continuation_result() as usize;
     let layout = Layout::array::<u8>(size).unwrap();
     let buffer = std::alloc::alloc(layout) as *mut u8;
 
-    call_Fx(
-        // This flags pointer will never get dereferenced
+    call_Cont(
         MaybeUninit::uninit().as_ptr(),
-        closure_data_ptr as *const u8,
+        closure_data_ptr,
         buffer as *mut u8,
     );
 
-    // Because Roc is not capturing anything the return is just the future.
-    // If the roc code is change to capture a value, we would need to save the rest of the buffer.
-    let out = Box::from_raw(*(buffer as *mut FuturePtr));
-    assert_eq!(size, std::mem::size_of_val(&out));
-    std::alloc::dealloc(buffer as *mut u8, layout);
+    buffer
+}
+// unsafe fn call_morecont_closure(closure_data_ptr: *mut u8, val: i32) -> *mut u8 {
+//     let mut buffer_ptr: *mut u8 = core::ptr::null::<u8>() as *mut u8;
+//     // call_MoreCont expects val to be stored in the flags.
+//     // Clear the tag from the closure data ptr before calling.
+//     call_MoreCont(
+//         &val as *const i32,
+//         remove_tag(closure_data_ptr),
+//         &mut buffer_ptr,
+//     );
 
-    out
+//     deallocate_refcounted_tag(closure_data_ptr);
+
+//     buffer_ptr
+// }
+
+unsafe fn deallocate_refcounted_tag<T>(ptr: *mut T) {
+    // TODO: handle this better.
+    // To deallocate we first need to ignore the lower bits that inclued the tag.
+    // Then we subtract 8 to get the refcount.
+    let ptr_to_refcount = remove_tag(ptr).offset(-8) as *mut c_void;
+    roc_dealloc(ptr_to_refcount, 8);
 }
 
-unsafe fn call_continuation_closure(x: i32) -> i32 {
-    let mut out = 0;
-    call_Cont(
-        &x as *const i32,
-        MaybeUninit::uninit().as_ptr(),
-        &mut out as *mut i32,
-    );
-    out
+fn get_tag<T>(ptr: *const T) -> u8 {
+    ptr as u8 & 0x07
 }
+
+unsafe fn remove_tag<T>(ptr: *mut T) -> *mut T {
+    // TODO: is this correct always?
+    (ptr as usize & 0xFFFF_FFFF_FFFF_FFF8) as *mut T
+}
+
 
 
 static mut DATA: i32 = 0;
