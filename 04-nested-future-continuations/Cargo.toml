@@ -22,5 +22,7 @@ tokio = { version = "1.19.2", features = ["full"] }
 futures = "0.3.21"
 libc = "0.2"
 rand = { version = "0.8.5", features = ["std_rng", "getrandom"] }
+env_logger = "0.9.0"
+log = "0.4.17"
 
 [workspace]

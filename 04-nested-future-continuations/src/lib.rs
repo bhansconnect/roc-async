@@ -4,6 +4,7 @@
 use core::alloc::Layout;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
+use log::{error, info};
 use std::ffi::CStr;
 use std::future::Future;
 use std::os::raw::c_char;
@@ -53,7 +54,7 @@ pub unsafe extern "C" fn roc_panic(c_ptr: *mut c_void, tag_id: u32) {
         0 => {
             let slice = CStr::from_ptr(c_ptr as *const c_char);
             let string = slice.to_str().unwrap();
-            eprintln!("Roc hit a panic: {}", string);
+            error!("Roc hit a panic: {}", string);
             std::process::exit(1);
         }
         _ => todo!(),
@@ -80,30 +81,35 @@ pub extern "C" fn rust_main() -> i32 {
         );
         RT.assume_init_ref().block_on(async {
             let n = 10;
-            println!("Roc + Tokio with an async host effect function");
-            println!("Each task will grab a value that takes 1s +/- 50ms to load\n");
-            println!("Starting {} async roc tasks on a single thread...", n);
+            env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+                .format_timestamp_millis()
+                .init();
+            info!("Roc + Tokio with an async host effect function");
+            info!("Requesting data takes 1s +/- 50ms\n");
+            info!("Starting {} async roc tasks on a single thread...", n);
             let mut handles = vec![];
             for i in 0..n {
+                let task_kind = i % 3;
+                info!("Roc task {:2}: starting with kind {}", i, task_kind);
                 let start = Instant::now();
                 handles.push(tokio::spawn(async move {
                     // TODO: The ergonomics are not great had to turn pointers into usize to avoid rust being angry.
-                    let mut cont_ptr = run_roc_main(i);
+                    let mut cont_ptr = run_roc_main(task_kind);
                     while get_tag(cont_ptr) != 0 {
-                        println!("Roc task {:2} requested more data", i);
+                        info!("Roc task {:2}: requested more data", i);
                         let untagged_ptr = remove_tag(cont_ptr);
                         // We guarantee the future is the first part of the tag.
                         // So we can just treate this as a pointer to the future.
                         let box_future = Box::from_raw(*(untagged_ptr as *const FuturePtr));
                         let val = Pin::from(box_future).await;
-                        println!("Roc task {:2} was sent {}", i, val);
+                        info!("Roc task {:2}: was sent {}", i, val);
                         cont_ptr = call_morecont_closure(cont_ptr, val);
                     }
                     // load data from done
                     let out = *(remove_tag(cont_ptr) as *const i32);
                     let elapsed_time = start.elapsed().as_millis();
-                    println!(
-                        "Roc task {:2} took {:4}ms and returned {:3}",
+                    info!(
+                        "Roc task {:2} took {:4}ms total and returned {:3}",
                         i, elapsed_time, out
                     );
                 }));
