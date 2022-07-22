@@ -95,15 +95,29 @@ pub extern "C" fn rust_main() -> i32 {
                 handles.push(tokio::spawn(async move {
                     // TODO: The ergonomics are not great had to turn pointers into usize to avoid rust being angry.
                     let mut cont_ptr = run_roc_main(task_kind);
-                    while get_tag(cont_ptr) != 0 {
-                        info!("Roc task {:2}: requested more data", i);
-                        let untagged_ptr = remove_tag(cont_ptr);
-                        // We guarantee the future is the first part of the tag.
-                        // So we can just treate this as a pointer to the future.
-                        let box_future = Box::from_raw(*(untagged_ptr as *const FuturePtr));
-                        let val = Pin::from(box_future).await;
-                        info!("Roc task {:2}: was sent {}", i, val);
-                        cont_ptr = call_morecont_closure(cont_ptr, val);
+                    loop {
+                        match get_tag(cont_ptr) {
+                            0 => {
+                                // Done
+                                break;
+                            }
+                            1 => {
+                                // MoreCont
+                                info!("Roc task {:2}: requested more data", i);
+                                let untagged_ptr = remove_tag(cont_ptr);
+                                // We guarantee the future is the first part of the tag.
+                                // So we can just treate this as a pointer to the future.
+                                let box_future = Box::from_raw(*(untagged_ptr as *const FuturePtr));
+                                let val = Pin::from(box_future).await;
+                                info!("Roc task {:2}: was sent {}", i, val);
+                                cont_ptr = call_morecont_closure(cont_ptr, val);
+                            }
+                            x => {
+                                // Invalid
+                                error!("got an invalid tag value: {}", x);
+                                std::process::exit(2);
+                            }
+                        }
                     }
                     // load data from done
                     let out = *(remove_tag(cont_ptr) as *const i32);
