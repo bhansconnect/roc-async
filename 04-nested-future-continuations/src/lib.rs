@@ -5,33 +5,24 @@ use core::alloc::Layout;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use std::ffi::CStr;
-use std::pin::Pin;
-use std::os::raw::c_char;
-use tokio::runtime::Runtime;
-use std::time::Instant;
 use std::future::Future;
+use std::os::raw::c_char;
+use std::pin::Pin;
+use std::time::Instant;
+use tokio::runtime::Runtime;
 
 extern "C" {
     #[link_name = "roc__mainForHost_1_exposed_generic"]
-    fn roc_main(output: *mut u8);
+    fn roc_main(output: *mut u8, x: i32);
 
     #[link_name = "roc__mainForHost_size"]
     fn roc_main_size() -> i64;
 
-    #[link_name = "roc__mainForHost_1_Continuation_result_size"]
-    fn size_Continuation_result() -> i64;
-
     #[link_name = "roc__mainForHost_1_Continuation_caller"]
-    fn call_Cont(flags: *const u8, closure_data: *const u8, output: *mut u8);
+    fn call_Cont(flags: *const u8, closure_data: *const u8, output: *mut *mut u8);
 
     #[link_name = "roc__mainForHost_1_MoreCont_caller"]
     fn call_MoreCont(flags: *const i32, closure_data: *const u8, output: *mut *mut u8);
-
-    #[link_name = "roc__mainForHost_1_MoreCont_size"]
-    fn size_MoreCont() -> i64;
-
-    #[link_name = "roc__mainForHost_1_MoreCont_result_size"]
-    fn size_MoreCont_result() -> i64;
 }
 
 static mut RT: MaybeUninit<Runtime> = MaybeUninit::uninit();
@@ -53,7 +44,7 @@ pub unsafe extern "C" fn roc_realloc(
 
 #[no_mangle]
 pub unsafe extern "C" fn roc_dealloc(c_ptr: *mut c_void, _alignment: u32) {
-    libc::free(c_ptr)
+    libc::free(c_ptr);
 }
 
 #[no_mangle]
@@ -88,7 +79,7 @@ pub extern "C" fn rust_main() -> i32 {
                 .unwrap(),
         );
         RT.assume_init_ref().block_on(async {
-            let n = 20;
+            let n = 10;
             println!("Roc + Tokio with an async host effect function");
             println!("Each task will grab a value that takes 1s +/- 50ms to load\n");
             println!("Starting {} async roc tasks on a single thread...", n);
@@ -96,11 +87,25 @@ pub extern "C" fn rust_main() -> i32 {
             for i in 0..n {
                 let start = Instant::now();
                 handles.push(tokio::spawn(async move {
-                    run_roc_main();
-                    // let val = Pin::from(run_roc_main()).await;
-                    // let out = call_continuation_closure(val);
-                    // let elapsed_time = start.elapsed().as_millis();
-                    // println!("async roc task {:2} took {:4}ms and returned {:3}", i, elapsed_time, out);
+                    // TODO: The ergonomics are not great had to turn pointers into usize to avoid rust being angry.
+                    let mut cont_ptr = run_roc_main(i);
+                    while get_tag(cont_ptr) != 0 {
+                        println!("Roc task {:2} requested more data", i);
+                        let untagged_ptr = remove_tag(cont_ptr);
+                        // We guarantee the future is the first part of the tag.
+                        // So we can just treate this as a pointer to the future.
+                        let box_future = Box::from_raw(*(untagged_ptr as *const FuturePtr));
+                        let val = Pin::from(box_future).await;
+                        println!("Roc task {:2} was sent {}", i, val);
+                        cont_ptr = call_morecont_closure(cont_ptr, val);
+                    }
+                    // load data from done
+                    let out = *(remove_tag(cont_ptr) as *const i32);
+                    let elapsed_time = start.elapsed().as_millis();
+                    println!(
+                        "Roc task {:2} took {:4}ms and returned {:3}",
+                        i, elapsed_time, out
+                    );
                 }));
             }
             futures::future::join_all(handles).await;
@@ -111,7 +116,7 @@ pub extern "C" fn rust_main() -> i32 {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct TraitObject {
     pub data: *mut (),
     pub vtable: *mut (),
@@ -120,81 +125,79 @@ pub struct TraitObject {
 type FuturePtr = *mut (dyn Future<Output = i32> + Send);
 type BoxFuture = Box<dyn Future<Output = i32> + Send>;
 
-fn run_roc_main() {
+fn run_roc_main(x: i32) -> usize {
     let size = unsafe { roc_main_size() } as usize;
     let layout = Layout::array::<u8>(size).unwrap();
 
     unsafe {
         // TODO allocate on the stack if it's under a certain size
-        let buffer = std::alloc::alloc(layout);
+        let buffer = std::alloc::alloc_zeroed(layout);
 
-        roc_main(buffer);
+        roc_main(buffer, x);
         let cont_ptr = call_continuation_closure(buffer);
         std::alloc::dealloc(buffer, layout);
-
-        dbg!(core::slice::from_raw_parts(remove_tag(cont_ptr), size_Continuation_result() as usize));
+        cont_ptr as usize
     }
 }
 
 unsafe fn call_continuation_closure(closure_data_ptr: *mut u8) -> *mut u8 {
-    let size = size_Continuation_result() as usize;
-    let layout = Layout::array::<u8>(size).unwrap();
-    let buffer = std::alloc::alloc(layout) as *mut u8;
+    let mut buffer_ptr: *mut u8 = core::ptr::null::<u8>() as *mut u8;
 
     call_Cont(
         MaybeUninit::uninit().as_ptr(),
         closure_data_ptr,
-        buffer as *mut u8,
+        &mut buffer_ptr,
     );
 
-    buffer
+    buffer_ptr
 }
-// unsafe fn call_morecont_closure(closure_data_ptr: *mut u8, val: i32) -> *mut u8 {
-//     let mut buffer_ptr: *mut u8 = core::ptr::null::<u8>() as *mut u8;
-//     // call_MoreCont expects val to be stored in the flags.
-//     // Clear the tag from the closure data ptr before calling.
-//     call_MoreCont(
-//         &val as *const i32,
-//         remove_tag(closure_data_ptr),
-//         &mut buffer_ptr,
-//     );
+unsafe fn call_morecont_closure(future_and_data_ptr: usize, val: i32) -> usize {
+    let mut buffer_ptr: *mut u8 = core::ptr::null::<u8>() as *mut u8;
+    // call_MoreCont expects val to be stored in the flags.
+    // Clear the tag from the closure data ptr before calling.
+    let closure_data_ptr = remove_tag(future_and_data_ptr + 16);
+    call_MoreCont(
+        &val as *const i32,
+        closure_data_ptr as *const u8,
+        &mut buffer_ptr,
+    );
 
-//     deallocate_refcounted_tag(closure_data_ptr);
+    deallocate_refcounted_tag(future_and_data_ptr);
 
-//     buffer_ptr
-// }
+    buffer_ptr as usize
+}
 
-unsafe fn deallocate_refcounted_tag<T>(ptr: *mut T) {
+unsafe fn deallocate_refcounted_tag(ptr: usize) {
     // TODO: handle this better.
-    // To deallocate we first need to ignore the lower bits that inclued the tag.
+    // To deallocate we first need to ignore the lower bits that include the tag.
     // Then we subtract 8 to get the refcount.
-    let ptr_to_refcount = remove_tag(ptr).offset(-8) as *mut c_void;
+    let ptr_to_refcount = (remove_tag(ptr) - 8) as *mut c_void;
     roc_dealloc(ptr_to_refcount, 8);
 }
 
-fn get_tag<T>(ptr: *const T) -> u8 {
+fn get_tag(ptr: usize) -> u8 {
     ptr as u8 & 0x07
 }
 
-unsafe fn remove_tag<T>(ptr: *mut T) -> *mut T {
+unsafe fn remove_tag(ptr: usize) -> usize {
     // TODO: is this correct always?
-    (ptr as usize & 0xFFFF_FFFF_FFFF_FFF8) as *mut T
+    ptr & 0xFFFF_FFFF_FFFF_FFF8
 }
-
-
 
 static mut DATA: i32 = 0;
 #[no_mangle]
 pub extern "C" fn roc_fx_readData() -> TraitObject {
     use tokio::time::{sleep, Duration};
-    let ptr : FuturePtr = Box::into_raw(Box::new(async {
-        use rand::{SeedableRng, Rng};
+    let ptr: FuturePtr = Box::into_raw(Box::new(async {
+        use rand::{Rng, SeedableRng};
         let mut rng = rand::rngs::StdRng::from_entropy();
         let time = 1000 + rng.gen_range(-50..50);
         sleep(Duration::from_millis(time as u64)).await;
-        let x = unsafe{DATA};
-        unsafe{DATA = x + 1;}
+        let x = unsafe { DATA };
+        unsafe {
+            DATA = x + 1;
+        }
         x
     }));
-    unsafe {std::mem::transmute(ptr)}
+    unsafe { std::mem::transmute(ptr) }
 }

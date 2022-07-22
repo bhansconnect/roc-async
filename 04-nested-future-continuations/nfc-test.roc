@@ -3,7 +3,7 @@ app "nfc-test"
     imports [pf.Effect.{Effect, Future}]
     provides [main] to pf
 
-main =
+main = \x ->
     # Effect.always (Done 12)
     future <- Effect.after Effect.readData
-    Effect.always (More future (\x -> Effect.always (Done (x * x))))
+    Effect.always (More future (\y -> Effect.always (Done (x * y))))
