@@ -83,7 +83,7 @@ pub extern "C" fn rust_main() -> i32 {
                 .unwrap(),
         );
         RT.assume_init_ref().block_on(async {
-            let n = 10;
+            let n = 6;
             env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
                 .format_timestamp_millis()
                 .init();
@@ -146,7 +146,7 @@ pub struct TraitObject {
 }
 
 type FuturePtr = *mut (dyn Future<Output = i32> + Send);
-type BoxFuture = Box<dyn Future<Output = i32> + Send>;
+// type BoxFuture = Box<dyn Future<Output = i32> + Send>;
 
 unsafe fn run_roc_main(x: i32) -> usize {
     let size = roc_main_size() as usize;

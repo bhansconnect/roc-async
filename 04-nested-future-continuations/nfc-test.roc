@@ -22,7 +22,7 @@ main = \x ->
             always (Done (y * z))
         2 ->
             y <- effectReadData
-            always (Done (x*y))
+            always (Done (y))
         _ ->
             # This should be impossible.
             # Panic
