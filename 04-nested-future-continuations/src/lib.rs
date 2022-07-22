@@ -23,7 +23,10 @@ extern "C" {
     fn call_Cont(flags: *const u8, closure_data: *const u8, output: *mut *mut u8);
 
     #[link_name = "roc__mainForHost_1_MoreCont_caller"]
-    fn call_MoreCont(flags: *const i32, closure_data: *const u8, output: *mut *mut u8);
+    fn call_MoreCont(flags: *const i32, closure_data: *const u8, output: *mut u8);
+
+    #[link_name = "roc__mainForHost_1_MoreCont_result_size"]
+    fn call_MoreCont_result_size() -> i64;
 }
 
 static mut RT: MaybeUninit<Runtime> = MaybeUninit::uninit();
@@ -145,19 +148,15 @@ pub struct TraitObject {
 type FuturePtr = *mut (dyn Future<Output = i32> + Send);
 type BoxFuture = Box<dyn Future<Output = i32> + Send>;
 
-fn run_roc_main(x: i32) -> usize {
-    let size = unsafe { roc_main_size() } as usize;
+unsafe fn run_roc_main(x: i32) -> usize {
+    let size = roc_main_size() as usize;
     let layout = Layout::array::<u8>(size).unwrap();
+    let buffer = std::alloc::alloc_zeroed(layout);
 
-    unsafe {
-        // TODO allocate on the stack if it's under a certain size
-        let buffer = std::alloc::alloc_zeroed(layout);
-
-        roc_main(buffer, x);
-        let cont_ptr = call_continuation_closure(buffer);
-        std::alloc::dealloc(buffer, layout);
-        cont_ptr as usize
-    }
+    roc_main(buffer, x);
+    let cont_ptr = call_continuation_closure(buffer);
+    std::alloc::dealloc(buffer, layout);
+    cont_ptr as usize
 }
 
 unsafe fn call_continuation_closure(closure_data_ptr: *mut u8) -> *mut u8 {
@@ -169,22 +168,37 @@ unsafe fn call_continuation_closure(closure_data_ptr: *mut u8) -> *mut u8 {
         &mut buffer_ptr,
     );
 
+    // dbg!(buffer_ptr);
+    // dbg!(remove_tag(buffer_ptr as usize));
+    // dbg!(*(remove_tag(buffer_ptr as usize) as *const (i64, i64, i64, i8, i8, i8, i8)));
+
     buffer_ptr
 }
+
 unsafe fn call_morecont_closure(future_and_data_ptr: usize, val: i32) -> usize {
-    let mut buffer_ptr: *mut u8 = core::ptr::null::<u8>() as *mut u8;
-    // call_MoreCont expects val to be stored in the flags.
+    let size = call_MoreCont_result_size() as usize;
+    let layout = Layout::array::<u8>(size).unwrap();
+    let buffer = std::alloc::alloc_zeroed(layout);
+
     // Clear the tag from the closure data ptr before calling.
     let closure_data_ptr = remove_tag(future_and_data_ptr + 16);
-    call_MoreCont(
-        &val as *const i32,
-        closure_data_ptr as *const u8,
-        &mut buffer_ptr,
-    );
-
+    // call_MoreCont expects val to be stored in the flags.
+    call_MoreCont(&val as *const i32, closure_data_ptr as *const u8, buffer);
     deallocate_refcounted_tag(future_and_data_ptr);
 
-    buffer_ptr as usize
+    // morecont theoretically returns an Effect Continuation.
+    // Those have to run thorugh the continuation caller?
+    // Not really sure why this works/has to be done.
+    // TODO: figure this out and make it not program specific.
+    let mut cont_ptr = call_continuation_closure(buffer);
+    std::alloc::dealloc(buffer, layout);
+    let (_, _, n, i, _, _, _) =
+        *(remove_tag(cont_ptr as usize) as *const (i64, i64, i64, i8, i8, i8, i8));
+    if i as u8 >= 16 {
+        deallocate_refcounted_tag(cont_ptr as usize);
+        cont_ptr = n as *mut u8;
+    }
+    cont_ptr as usize
 }
 
 unsafe fn deallocate_refcounted_tag(ptr: usize) {
