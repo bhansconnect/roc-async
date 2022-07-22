@@ -9,8 +9,8 @@ effectReadData = \cont ->
     future <- after Effect.readData
     always (More future cont)
 
-main = \x ->
-    when x is
+main = \kind ->
+    when kind is
         0 ->
             a <- effectReadData
             b <- effectReadData
