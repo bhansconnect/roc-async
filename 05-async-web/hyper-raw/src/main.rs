@@ -1,10 +1,42 @@
 use std::convert::Infallible;
 
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Request, Response, Server};
+use hyper::{Body, Method, Request, Response, Server, StatusCode};
 
-async fn hello(_: Request<Body>) -> Result<Response<Body>, Infallible> {
-    Ok(Response::new(Body::from("Hello World!")))
+async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
+    let mut response = Response::new(Body::empty());
+
+    // Path will aways start with a "/".
+    // So skip the first result of "".
+    let path = req.uri().path();
+    let mut path = path.split("/").skip(1);
+    let base = path.next();
+    match (req.method(), base) {
+        (&Method::GET, Some("")) => {
+            // Root path just print hello world.
+            *response.body_mut() = Body::from("Hello, World!");
+        }
+        (&Method::GET, Some("hello")) => {
+            let first = path.next();
+            let last = path.next();
+            let body = match (first, last) {
+                (Some(first), Some(last)) if !first.is_empty() && !last.is_empty() => {
+                    format!("Hello, {} {}!", first, last)
+                }
+                (Some(first), _) if !first.is_empty() => format!("Hello, {}!", first),
+                _ => "Hello, Mr. Nobody?".to_string(),
+            };
+            *response.body_mut() = Body::from(body);
+        }
+        // TODO: add html template route
+        // TODO: add json encode and decode route
+        // TODO: add DB access route (can start by mocking with sleeping)
+        // TODO: add high mem/generation route (probably with dynamic list)
+        // TODO: add compute heavy route
+        _ => *response.status_mut() = StatusCode::NOT_FOUND,
+    }
+
+    Ok(response)
 }
 
 #[tokio::main]
@@ -15,7 +47,7 @@ pub async fn main() {
         // This is the `Service` that will handle the connection.
         // `service_fn` is a helper to convert a function that
         // returns a Response into a `Service`.
-        async { Ok::<_, Infallible>(service_fn(hello)) }
+        async { Ok::<_, Infallible>(service_fn(root)) }
     });
 
     let addr = ([127, 0, 0, 1], 3000).into();
