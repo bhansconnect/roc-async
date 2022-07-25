@@ -50,7 +50,7 @@ pub async fn main() {
         async { Ok::<_, Infallible>(service_fn(root)) }
     });
 
-    let addr = ([127, 0, 0, 1], 3000).into();
+    let addr = ([0, 0, 0, 0], 3000).into();
 
     let server = Server::bind(&addr).serve(make_svc);
 
