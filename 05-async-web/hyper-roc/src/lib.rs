@@ -27,11 +27,11 @@ extern "C" {
     #[link_name = "roc__mainForHost_1_Continuation_result_size"]
     fn call_Continuation_result_size() -> usize;
 
-    #[link_name = "roc__mainForHost_1_DBResultCont_caller"]
-    fn call_DBResultCont(flags: *const usize, closure_data: *const u8, output: *mut usize);
+    #[link_name = "roc__mainForHost_1_DBRequestCont_caller"]
+    fn call_DBRequestCont(flags: *const u64, closure_data: *const u8, output: *mut usize);
 
-    #[link_name = "roc__mainForHost_1_DBResultCont_result_size"]
-    fn call_DBResultCont_result_size() -> usize;
+    #[link_name = "roc__mainForHost_1_DBRequestCont_result_size"]
+    fn call_DBRequestCont_result_size() -> usize;
 }
 
 #[repr(C)]
@@ -40,8 +40,6 @@ pub struct TraitObject {
     pub data: *mut (),
     pub vtable: *mut (),
 }
-
-type DBResultFuturePtr = *mut (dyn Future<Output = usize> + Send);
 
 static mut RT: MaybeUninit<Runtime> = MaybeUninit::uninit();
 
@@ -94,6 +92,13 @@ struct RocResponse {
     status: u16,
 }
 
+#[inline(never)]
+async fn fake_db_call(delay_ms: u64) -> u64 {
+    tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+    // This is our dummy db call result.
+    1
+}
+
 async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
     let mut resp = Response::new(Body::from(""));
     let mut cont_ptr: usize = 0;
@@ -115,11 +120,11 @@ async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
                 0 => {
                     // DBResult
                     let untagged_ptr = remove_tag(cont_ptr);
-                    // We guarantee the future is the first part of the tag.
-                    // So we can just treate this as a pointer to the future.
-                    let box_future = Box::from_raw(*(untagged_ptr as *const DBResultFuturePtr));
-                    let val = Pin::from(box_future).await;
-                    cont_ptr = call_DBResultCont_closure(cont_ptr, val);
+                    // We guarantee the delay is the first part of the tag.
+                    // So we can just treate this as a pointer to the delay.
+                    let delay_ms = *(untagged_ptr as *const u64);
+                    let val = fake_db_call(delay_ms).await;
+                    cont_ptr = call_DBRequestCont_closure(cont_ptr, val);
                 }
                 1 => {
                     // Response
@@ -142,11 +147,11 @@ async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
     Ok(resp)
 }
 
-unsafe fn call_DBResultCont_closure(future_and_data_ptr: usize, val: usize) -> usize {
+unsafe fn call_DBRequestCont_closure(future_and_data_ptr: usize, val: u64) -> usize {
     let closure_data_ptr = remove_tag(future_and_data_ptr + 16);
     let mut cont_ptr: usize = 0;
 
-    call_DBResultCont(
+    call_DBRequestCont(
         &val,
         closure_data_ptr as *const u8,
         // buffer.as_mut_ptr() as *mut u8,
@@ -173,7 +178,7 @@ pub extern "C" fn rust_main() -> i32 {
         std::mem::size_of::<*const c_void>()
     );
     assert_eq!(
-        unsafe { call_DBResultCont_result_size() },
+        unsafe { call_DBRequestCont_result_size() },
         std::mem::size_of::<*const c_void>()
     );
     unsafe {

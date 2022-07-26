@@ -47,14 +47,12 @@ main = \req ->
         when T delayMSResult repsResult is
             # The next 2 cases should be unified, but the matching doesn't seem to work.
             T (Ok delayMS) (Ok 1) ->
-                future <- Effect.fakeDBCall delayMS |> after
-                always (DBResult future \res ->
+                always (DBRequest delayMS \res ->
                     resStr = Num.toStr res
                     Response {status: 200, body: "\(resStr) Nap Completed"} |> always
                 )
             T (Ok delayMS) (Err _) ->
-                future <- Effect.fakeDBCall delayMS |> after
-                always (DBResult future \res ->
+                always (DBRequest delayMS \res ->
                     resStr = Num.toStr res
                     Response {status: 200, body: "\(resStr) Nap Completed"} |> always
                 )
