@@ -1,6 +1,6 @@
-use std::alloc::Layout;
 use std::convert::Infallible;
 use std::ffi::{c_void, CStr};
+use std::future::Future;
 use std::mem::MaybeUninit;
 use std::os::raw::c_char;
 
@@ -15,10 +15,14 @@ extern "C" {
     fn roc_main(closure_data: *mut u8, req: *const Request<Body>);
 
     #[link_name = "roc__mainForHost_size"]
-    fn roc_main_size() -> i64;
+    fn roc_main_size() -> usize;
 
-    #[link_name = "roc__mainForHost_1_Main_caller"]
-    fn call_Main(flags: *const u8, closure_data: *const u8, output: *mut RocResponse);
+    #[link_name = "roc__mainForHost_1_Continuation_caller"]
+    // The last field should be a pionter to a pionter, but we take it as a usize instead.
+    fn call_Continuation(flags: *const u8, closure_data: *const u8, cont_ptr: *mut usize);
+
+    #[link_name = "roc__mainForHost_1_Continuation_result_size"]
+    fn call_Continuation_result_size() -> usize;
 
     // #[link_name = "roc__mainForHost_1_MoreCont_caller"]
     // fn call_MoreCont(flags: *const i32, closure_data: *const u8, output: *mut u8);
@@ -26,6 +30,15 @@ extern "C" {
     // #[link_name = "roc__mainForHost_1_MoreCont_result_size"]
     // fn call_MoreCont_result_size() -> i64;
 }
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct TraitObject {
+    pub data: *mut (),
+    pub vtable: *mut (),
+}
+
+type FuturePtr = *mut (dyn Future<Output = i32> + Send);
 
 static mut RT: MaybeUninit<Runtime> = MaybeUninit::uninit();
 
@@ -79,34 +92,51 @@ struct RocResponse {
 }
 
 async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
-    let mut out = RocResponse {
-        body: RocStr::empty(),
-        status: 0,
-    };
+    let mut resp = Response::new(Body::from(""));
+    let mut cont_ptr: usize = 0;
 
     unsafe {
-        let size = roc_main_size() as usize;
+        let size = roc_main_size();
         stackalloc::alloca(size, |buffer| {
             roc_main(buffer.as_mut_ptr() as *mut u8, &req);
 
-            call_Main(
+            call_Continuation(
                 // This flags pointer will never get dereferenced
                 MaybeUninit::uninit().as_ptr(),
                 buffer.as_ptr() as *const u8,
-                &mut out,
+                &mut cont_ptr,
             );
+
+            match get_tag(cont_ptr) {
+                0 => {
+                    // DBResult
+                    *resp.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                    // TODO: Run future and call continuation.
+                }
+                1 => {
+                    // Response
+                    let out_ptr = remove_tag(cont_ptr) as *const RocResponse;
+                    *resp.status_mut() = StatusCode::from_u16((&*out_ptr).status)
+                        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+                    // TODO: Look into directly supporting RocStr here to avoid the copy.
+                    *resp.body_mut() = Body::from((&*out_ptr).body.as_str().to_owned())
+                }
+                _ => {
+                    *resp.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                }
+            }
         })
     }
 
-    // TODO: Look into directly supporting RocStr here to avoid the copy.
-    let mut resp = Response::new(Body::from(out.body.as_str().to_owned()));
-    *resp.status_mut() =
-        StatusCode::from_u16(out.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     Ok(resp)
 }
 
 #[no_mangle]
 pub extern "C" fn rust_main() -> i32 {
+    assert_eq!(
+        unsafe { call_Continuation_result_size() },
+        std::mem::size_of::<*const c_void>()
+    );
     unsafe {
         RT = MaybeUninit::new(
             tokio::runtime::Builder::new_multi_thread()
@@ -171,4 +201,31 @@ pub extern "C" fn roc_fx_method(req: *const Request<Body>) -> RocMethod {
 #[no_mangle]
 pub unsafe extern "C" fn roc_fx_path(req: *const Request<Body>) -> RocStr {
     RocStr::from_slice_unchecked((&*req).uri().path().as_bytes())
+}
+
+#[no_mangle]
+pub extern "C" fn roc_fx_fakeDBCall(sleep_ms: u64) -> TraitObject {
+    use tokio::time::{sleep, Duration};
+    let ptr: FuturePtr = Box::into_raw(Box::new(async move {
+        sleep(Duration::from_millis(sleep_ms)).await;
+        1
+    }));
+    unsafe { std::mem::transmute(ptr) }
+}
+
+unsafe fn deallocate_refcounted_tag(ptr: usize) {
+    // TODO: handle this better.
+    // To deallocate we first need to ignore the lower bits that include the tag.
+    // Then we subtract 8 to get the refcount.
+    let ptr_to_refcount = (remove_tag(ptr) - 8) as *mut c_void;
+    roc_dealloc(ptr_to_refcount, 8);
+}
+
+fn get_tag(ptr: usize) -> u8 {
+    ptr as u8 & 0x07
+}
+
+unsafe fn remove_tag(ptr: usize) -> usize {
+    // TODO: is this correct always?
+    ptr & 0xFFFF_FFFF_FFFF_FFF8
 }
