@@ -1,0 +1,25 @@
+[package]
+name = "host"
+version = "0.1.0"
+authors = ["The Roc Contributors"]
+license = "UPL-1.0"
+edition = "2021"
+
+links = "app"
+
+[lib]
+name = "host"
+path = "src/lib.rs"
+crate-type = ["staticlib", "rlib"]
+
+[[bin]]
+name = "host"
+path = "src/main.rs"
+
+[dependencies]
+roc_std = { path = "../../../roc/crates/roc_std" }
+hyper = { version = "0.14", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
+libc = "0.2"
+
+[workspace]
