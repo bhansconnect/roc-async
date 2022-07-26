@@ -71,9 +71,21 @@ async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
                 *response.status_mut() = StatusCode::BAD_REQUEST;
             }
         }
+        (&Method::POST, Some("dup")) => {
+            // Duplicate the body N times.
+            let n = path.next().map(|x| x.parse::<usize>());
+            let body = hyper::body::to_bytes(req.into_body()).await;
+            match (n, body) {
+                (Some(Ok(n)), Ok(body)) => {
+                    *response.body_mut() = Body::from(body.repeat(n));
+                }
+                _ => {
+                    *response.status_mut() = StatusCode::BAD_REQUEST;
+                }
+            }
+        }
         // TODO: add html template route
         // TODO: add json encode and decode route
-        // TODO: add high mem/generation route (probably with dynamic list)
         // TODO: add DB access route (probably still mock with sleep but generate query or results)
         _ => *response.status_mut() = StatusCode::NOT_FOUND,
     }
