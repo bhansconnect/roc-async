@@ -2,16 +2,14 @@
 
 use std::convert::Infallible;
 use std::ffi::{c_void, CStr};
-use std::future::Future;
 use std::mem::MaybeUninit;
 use std::os::raw::c_char;
-use std::pin::Pin;
 
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use tokio::runtime::Runtime;
 
-use roc_std::RocStr;
+use roc_std::{RocResult, RocStr};
 
 extern "C" {
     #[link_name = "roc__mainForHost_1_exposed_generic"]
@@ -32,6 +30,16 @@ extern "C" {
 
     #[link_name = "roc__mainForHost_1_DBRequestCont_result_size"]
     fn call_DBRequestCont_result_size() -> usize;
+
+    #[link_name = "roc__mainForHost_1_LoadBodyCont_caller"]
+    fn call_LoadBodyCont(
+        flags: *const RocResult<RocStr, ()>,
+        closure_data: *const u8,
+        output: *mut usize,
+    );
+
+    #[link_name = "roc__mainForHost_1_LoadBodyCont_result_size"]
+    fn call_LoadBodyCont_result_size() -> usize;
 }
 
 #[repr(C)]
@@ -118,7 +126,7 @@ async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
         loop {
             match get_tag(cont_ptr) {
                 0 => {
-                    // DBResult
+                    // DBRequest
                     let untagged_ptr = remove_tag(cont_ptr);
                     // We guarantee the delay is the first part of the tag.
                     // So we can just treate this as a pointer to the delay.
@@ -127,6 +135,18 @@ async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
                     cont_ptr = call_DBRequestCont_closure(cont_ptr, val);
                 }
                 1 => {
+                    // LoadBody
+                    let result = match hyper::body::to_bytes(req.into_body()).await {
+                        Ok(bytes) => RocResult::ok(RocStr::from_slice_unchecked(&bytes)),
+                        _ => RocResult::err(()),
+                    };
+                    cont_ptr = call_LoadBodyCont_closure(cont_ptr, result);
+                    // TODO: this has problems with ownership currently.
+                    // Just error out and move on for now.
+                    *resp.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                    break;
+                }
+                2 => {
                     // Response
                     let out_ptr = remove_tag(cont_ptr) as *const RocResponse;
                     *resp.status_mut() = StatusCode::from_u16((&*out_ptr).status)
@@ -147,8 +167,8 @@ async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
     Ok(resp)
 }
 
-unsafe fn call_DBRequestCont_closure(future_and_data_ptr: usize, val: u64) -> usize {
-    let closure_data_ptr = remove_tag(future_and_data_ptr + 16);
+unsafe fn call_DBRequestCont_closure(args_and_data_ptr: usize, val: u64) -> usize {
+    let closure_data_ptr = remove_tag(args_and_data_ptr + 16);
     let mut cont_ptr: usize = 0;
 
     call_DBRequestCont(
@@ -157,7 +177,31 @@ unsafe fn call_DBRequestCont_closure(future_and_data_ptr: usize, val: u64) -> us
         // buffer.as_mut_ptr() as *mut u8,
         &mut cont_ptr,
     );
-    deallocate_refcounted_tag(future_and_data_ptr);
+    deallocate_refcounted_tag(args_and_data_ptr);
+
+    // TODO: With nested continuations, this may need to be used.
+    // Ran into issues related to it in the 04-nested-future-continuations
+    // call_Continuation(
+    //     // This flags pointer will never get dereferenced
+    //     MaybeUninit::uninit().as_ptr(),
+    //     buffer.as_ptr() as *const u8,
+    //     &mut cont_ptr,
+    // );
+
+    cont_ptr
+}
+
+unsafe fn call_LoadBodyCont_closure(data_ptr: usize, result: RocResult<RocStr, ()>) -> usize {
+    let closure_data_ptr = remove_tag(data_ptr);
+    let mut cont_ptr: usize = 0;
+
+    call_LoadBodyCont(
+        &result,
+        closure_data_ptr as *const u8,
+        // buffer.as_mut_ptr() as *mut u8,
+        &mut cont_ptr,
+    );
+    deallocate_refcounted_tag(data_ptr);
 
     // TODO: With nested continuations, this may need to be used.
     // Ran into issues related to it in the 04-nested-future-continuations
@@ -179,6 +223,10 @@ pub extern "C" fn rust_main() -> i32 {
     );
     assert_eq!(
         unsafe { call_DBRequestCont_result_size() },
+        std::mem::size_of::<*const c_void>()
+    );
+    assert_eq!(
+        unsafe { call_LoadBodyCont_result_size() },
         std::mem::size_of::<*const c_void>()
     );
     unsafe {
@@ -247,15 +295,20 @@ pub unsafe extern "C" fn roc_fx_path(req: *const Request<Body>) -> RocStr {
     RocStr::from_slice_unchecked((&*req).uri().path().as_bytes())
 }
 
-#[no_mangle]
-pub extern "C" fn roc_fx_fakeDBCall(sleep_ms: u64) -> TraitObject {
-    use tokio::time::{sleep, Duration};
-    let ptr: DBResultFuturePtr = Box::into_raw(Box::new(async move {
-        sleep(Duration::from_millis(sleep_ms)).await;
-        1
-    }));
-    unsafe { std::mem::transmute(ptr) }
-}
+// TODO: make this work somehow?
+// The issue is that we can't take ownership of the body to read it.
+// #[no_mangle]
+// pub unsafe extern "C" fn roc_fx_body(req_usize: usize) -> TraitObject {
+//     use hyper::body::HttpBody;
+//     let ptr: BodyFuturePtr = Box::into_raw(Box::new(async move {
+//         let req = req_usize as *const Request<Body>;
+//         match hyper::body::to_bytes((&*req).into_body().boxed()).await {
+//             Ok(bytes) => RocResult::ok(RocStr::from_slice_unchecked(&bytes)),
+//             _ => RocResult::err(()),
+//         }
+//     }));
+//     unsafe { std::mem::transmute(ptr) }
+// }
 
 unsafe fn deallocate_refcounted_tag(ptr: usize) {
     // TODO: handle this better.
