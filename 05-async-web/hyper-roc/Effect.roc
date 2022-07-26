@@ -1,5 +1,5 @@
 hosted Effect
-    exposes [Effect, after, map, always, forever, loop, method, Future, Request]
+    exposes [Effect, after, map, always, forever, loop, method, path, Future, Request]
     imports []
     generates Effect with [after, map, always, forever, loop]
 
@@ -23,6 +23,6 @@ Method : [
 
 method : Request -> Effect Method
 
-# path : Request -> Effect Str
+path : Request -> Effect Str
 
 # readData : Effect Future

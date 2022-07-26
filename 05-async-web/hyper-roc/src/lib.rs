@@ -167,3 +167,8 @@ pub extern "C" fn roc_fx_method(req: *const Request<Body>) -> RocMethod {
         _ => RocMethod::Other,
     }
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn roc_fx_path(req: *const Request<Body>) -> RocStr {
+    RocStr::from_slice_unchecked((&*req).uri().path().as_bytes())
+}

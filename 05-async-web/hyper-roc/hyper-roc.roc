@@ -5,10 +5,38 @@ app "hyper-roc"
 
 main = \req ->
     method <- Effect.method req |> after
+    path <- Effect.path req |> after
+    # Note: Str.split has a bug currently.
+    # It returns ["/"] on the root path of "/" instead of ["", ""]
+    pathList = Str.split path "/"
     resp =
-        when method is
-            Get ->
-                {status: 200, body: "Hello, World!"}
-            _ ->
-                {status: 404, body: ""}
+        # It seems that we can't yet match on a Str.
+        # hits a bug in decision_tree.rs
+        # Using if instead.
+
+        # We care about the second element for routing.
+        # If it doesn't exit, we are dealing with the main root.
+        route =
+            when List.get pathList 1 is
+                Ok x  -> x
+                Err _ -> "/"
+        if T method route == T Get "/" then
+            {status: 200, body: "Hello, World!"}
+        else if T method route == T Get "hello" then
+            first = List.get pathList 2
+            last = List.get pathList 3
+            when T first last is
+                # Roc doesn't have guards to my knowledge so adding them manually.
+                T (Ok "") _ ->
+                    {status: 200, body: "Hello, Mr. Nobody?"}
+                T (Ok firstStr) (Ok "") ->
+                    {status: 200, body: "Hello, \(firstStr)!"}
+                T (Ok firstStr) (Ok lastStr) ->
+                    {status: 200, body: "Hello, \(firstStr) \(lastStr)!"}
+                T (Ok firstStr) _ ->
+                    {status: 200, body: "Hello, \(firstStr)!"}
+                _ ->
+                    {status: 200, body: "Hello, Mr. Nobody?"}
+        else
+            {status: 404, body: ""}
     always resp
