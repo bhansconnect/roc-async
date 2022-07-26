@@ -12,6 +12,10 @@ fn fibonacci(n: u64) -> u64 {
     }
 }
 
+async fn fake_db_call(delay_ms: u64) {
+    tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+}
+
 async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
     let mut response = Response::new(Body::empty());
 
@@ -39,13 +43,23 @@ async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
             *response.body_mut() = Body::from(body);
         }
         (&Method::GET, Some("sleep")) => {
-            // Sleep for X milliseconds to simulate a async call.
-            let time = path.next();
-            if let Some(Ok(time)) = time.map(|x| x.parse::<u64>()) {
-                tokio::time::sleep(tokio::time::Duration::from_millis(time)).await;
-                *response.body_mut() = Body::from("Nap Completed");
-            } else {
-                *response.status_mut() = StatusCode::BAD_REQUEST;
+            // Sleep for X milliseconds Y times to simulate async calls.
+            let delay_ms = path.next().map(|x| x.parse::<u64>());
+            let reps = path.next().map(|x| x.parse::<u64>());
+            match (delay_ms, reps) {
+                (Some(Ok(delay_ms)), Some(Ok(reps))) => {
+                    for _ in 0..reps {
+                        fake_db_call(delay_ms).await;
+                    }
+                    *response.body_mut() = Body::from(format!("{} Naps Completed", reps));
+                }
+                (Some(Ok(delay_ms)), None) => {
+                    fake_db_call(delay_ms).await;
+                    *response.body_mut() = Body::from("Nap Completed");
+                }
+                _ => {
+                    *response.status_mut() = StatusCode::BAD_REQUEST;
+                }
             }
         }
         (&Method::GET, Some("compute")) => {
@@ -60,7 +74,7 @@ async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
         // TODO: add html template route
         // TODO: add json encode and decode route
         // TODO: add high mem/generation route (probably with dynamic list)
-        // TODO: add DB access route (can start by mocking with sleeping)
+        // TODO: add DB access route (probably still mock with sleep but generate query or results)
         _ => *response.status_mut() = StatusCode::NOT_FOUND,
     }
 
