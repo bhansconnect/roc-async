@@ -12,8 +12,11 @@ fn fibonacci(n: u64) -> u64 {
     }
 }
 
-async fn fake_db_call(delay_ms: u64) {
+#[inline(never)]
+async fn fake_db_call(delay_ms: u64) -> u64 {
     tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+    // This is our dummy db call result.
+    1
 }
 
 async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
@@ -47,15 +50,16 @@ async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
             let delay_ms = path.next().map(|x| x.parse::<u64>());
             let reps = path.next().map(|x| x.parse::<u64>());
             match (delay_ms, reps) {
-                (Some(Ok(delay_ms)), Some(Ok(reps))) => {
+                (Some(Ok(delay_ms)), Some(Ok(reps))) if reps != 1 => {
+                    let mut x = 0;
                     for _ in 0..reps {
-                        fake_db_call(delay_ms).await;
+                        x += fake_db_call(delay_ms).await;
                     }
-                    *response.body_mut() = Body::from(format!("{} Naps Completed", reps));
+                    *response.body_mut() = Body::from(format!("{} Naps Completed", x));
                 }
-                (Some(Ok(delay_ms)), None) => {
-                    fake_db_call(delay_ms).await;
-                    *response.body_mut() = Body::from("Nap Completed");
+                (Some(Ok(delay_ms)), None | Some(Ok(1))) => {
+                    let x = fake_db_call(delay_ms).await;
+                    *response.body_mut() = Body::from(format!("{} Nap Completed", x));
                 }
                 _ => {
                     *response.status_mut() = StatusCode::BAD_REQUEST;
