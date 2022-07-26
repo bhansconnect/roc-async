@@ -1,8 +1,11 @@
+#![allow(non_snake_case)]
+
 use std::convert::Infallible;
 use std::ffi::{c_void, CStr};
 use std::future::Future;
 use std::mem::MaybeUninit;
 use std::os::raw::c_char;
+use std::pin::Pin;
 
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
@@ -24,11 +27,11 @@ extern "C" {
     #[link_name = "roc__mainForHost_1_Continuation_result_size"]
     fn call_Continuation_result_size() -> usize;
 
-    // #[link_name = "roc__mainForHost_1_MoreCont_caller"]
-    // fn call_MoreCont(flags: *const i32, closure_data: *const u8, output: *mut u8);
+    #[link_name = "roc__mainForHost_1_DBResultCont_caller"]
+    fn call_DBResultCont(flags: *const usize, closure_data: *const u8, output: *mut usize);
 
-    // #[link_name = "roc__mainForHost_1_MoreCont_result_size"]
-    // fn call_MoreCont_result_size() -> i64;
+    #[link_name = "roc__mainForHost_1_DBResultCont_result_size"]
+    fn call_DBResultCont_result_size() -> usize;
 }
 
 #[repr(C)]
@@ -38,7 +41,7 @@ pub struct TraitObject {
     pub vtable: *mut (),
 }
 
-type FuturePtr = *mut (dyn Future<Output = i32> + Send);
+type DBResultFuturePtr = *mut (dyn Future<Output = usize> + Send);
 
 static mut RT: MaybeUninit<Runtime> = MaybeUninit::uninit();
 
@@ -106,12 +109,17 @@ async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
                 buffer.as_ptr() as *const u8,
                 &mut cont_ptr,
             );
-
+        });
+        loop {
             match get_tag(cont_ptr) {
                 0 => {
                     // DBResult
-                    *resp.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-                    // TODO: Run future and call continuation.
+                    let untagged_ptr = remove_tag(cont_ptr);
+                    // We guarantee the future is the first part of the tag.
+                    // So we can just treate this as a pointer to the future.
+                    let box_future = Box::from_raw(*(untagged_ptr as *const DBResultFuturePtr));
+                    let val = Pin::from(box_future).await;
+                    cont_ptr = call_DBResultCont_closure(cont_ptr, val);
                 }
                 1 => {
                     // Response
@@ -119,22 +127,53 @@ async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
                     *resp.status_mut() = StatusCode::from_u16((&*out_ptr).status)
                         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
                     // TODO: Look into directly supporting RocStr here to avoid the copy.
-                    *resp.body_mut() = Body::from((&*out_ptr).body.as_str().to_owned())
+                    *resp.body_mut() = Body::from((&*out_ptr).body.as_str().to_owned());
+                    break;
                 }
                 _ => {
                     *resp.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                    break;
                 }
             }
-        })
+        }
+        deallocate_refcounted_tag(cont_ptr);
     }
 
     Ok(resp)
+}
+
+unsafe fn call_DBResultCont_closure(future_and_data_ptr: usize, val: usize) -> usize {
+    let closure_data_ptr = remove_tag(future_and_data_ptr + 16);
+    let mut cont_ptr: usize = 0;
+
+    call_DBResultCont(
+        &val,
+        closure_data_ptr as *const u8,
+        // buffer.as_mut_ptr() as *mut u8,
+        &mut cont_ptr,
+    );
+    deallocate_refcounted_tag(future_and_data_ptr);
+
+    // TODO: With nested continuations, this may need to be used.
+    // Ran into issues related to it in the 04-nested-future-continuations
+    // call_Continuation(
+    //     // This flags pointer will never get dereferenced
+    //     MaybeUninit::uninit().as_ptr(),
+    //     buffer.as_ptr() as *const u8,
+    //     &mut cont_ptr,
+    // );
+
+    cont_ptr
 }
 
 #[no_mangle]
 pub extern "C" fn rust_main() -> i32 {
     assert_eq!(
         unsafe { call_Continuation_result_size() },
+        std::mem::size_of::<*const c_void>()
+    );
+    assert_eq!(
+        unsafe { call_DBResultCont_result_size() },
         std::mem::size_of::<*const c_void>()
     );
     unsafe {
@@ -206,7 +245,7 @@ pub unsafe extern "C" fn roc_fx_path(req: *const Request<Body>) -> RocStr {
 #[no_mangle]
 pub extern "C" fn roc_fx_fakeDBCall(sleep_ms: u64) -> TraitObject {
     use tokio::time::{sleep, Duration};
-    let ptr: FuturePtr = Box::into_raw(Box::new(async move {
+    let ptr: DBResultFuturePtr = Box::into_raw(Box::new(async move {
         sleep(Duration::from_millis(sleep_ms)).await;
         1
     }));

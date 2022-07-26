@@ -186,9 +186,6 @@ unsafe fn call_morecont_closure(future_and_data_ptr: usize, val: i32) -> usize {
     call_MoreCont(&val as *const i32, closure_data_ptr as *const u8, buffer);
     deallocate_refcounted_tag(future_and_data_ptr);
 
-    // morecont theoretically returns an Effect Continuation.
-    // Those have to run thorugh the continuation caller?
-    // Not really sure why this works/has to be done.
     // TODO: figure this out and make it not program specific.
     let mut cont_ptr = call_continuation_closure(buffer);
     std::alloc::dealloc(buffer, layout);
