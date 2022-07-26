@@ -62,19 +62,19 @@ main = \req ->
                 Response {status: 500, body: ""} |> always
             _ ->
                 Response {status: 400, body: ""} |> always
-    else if T method route == T Get "dup" then
-        when List.get pathList 2 |> Result.try Str.toNat is
-            Ok n ->
-                always (LoadBody \res ->
-                    when res is
-                        Ok body ->
-                            dup = Str.repeat body n
-                            Response {status: 200, body: "\(dup)"} |> always
-                        _ ->
-                            Response {status: 400, body: ""} |> always
-                )
-            Err _ ->
-                Response {status: 400, body: ""} |> always
+    # else if T method route == T Get "dup" then
+    #     when List.get pathList 2 |> Result.try Str.toNat is
+    #         Ok n ->
+    #             always (LoadBody \res ->
+    #                 when res is
+    #                     Ok body ->
+    #                         dup = Str.repeat body n
+    #                         Response {status: 200, body: "\(dup)"} |> always
+    #                     _ ->
+    #                         Response {status: 400, body: ""} |> always
+    #             )
+    #         Err _ ->
+    #             Response {status: 400, body: ""} |> always
     else
         Response {status: 404, body: ""} |> always
 
