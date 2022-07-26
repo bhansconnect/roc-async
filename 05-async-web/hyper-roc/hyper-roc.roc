@@ -37,6 +37,20 @@ main = \req ->
                     {status: 200, body: "Hello, \(firstStr)!"}
                 _ ->
                     {status: 200, body: "Hello, Mr. Nobody?"}
+        else if T method route == T Get "compute" then
+            when List.get pathList 2 |> Result.try Str.toU64 is
+                Ok n ->
+                    {status: 200, body: Num.toStr (fibonacci n)}
+                Err _ ->
+                    {status: 400, body: ""}
         else
             {status: 404, body: ""}
     always resp
+
+# This is intentionally a bad recursive fib to eat of compute time.
+fibonacci : U64 -> U64
+fibonacci = \n ->
+    when n is
+        0 -> 1
+        1 -> 1
+        _ -> fibonacci (n - 1) + fibonacci (n - 2)
