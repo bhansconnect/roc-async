@@ -1,7 +1,57 @@
 use std::convert::Infallible;
 
+use askama::Template;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
+
+struct Link<'a> {
+    name: &'a str,
+    url: &'a str,
+    description: &'a str,
+}
+
+// This template is ingested during build and should be extremely fast.
+#[derive(Template)]
+#[template(path = "roc-home.html")]
+struct RocHomeTemplate<'a> {
+    links: Vec<Link<'a>>,
+}
+
+#[inline(never)]
+fn links() -> Vec<Link<'static>> {
+    vec![
+        Link {
+            name: "Roc at Handmade Seattle",
+            url: "https://media.handmade-seattle.com/roc-lang",
+            description: "November 12, 2021 (very low-level explanation of how Roc's compiler makes programs run fast)",
+        },
+        Link {
+            name: "Outperforming Imperative with Pure Functional Languages",
+            url: "https://youtu.be/vzfy4EKwG_Y",
+            description: "October 1, 2021 (about Roc's runtime performance and optimizer)",
+        },
+        Link {
+            name: "A taste of Roc",
+            url: "https://youtu.be/6qzWm_eoUXM",
+            description: "September 23, 2021 (syntax, application examples)",
+        },
+        Link {
+            name: "Roc at the Philly ETE conference",
+            url: "https://youtu.be/cpQwtwVKAfU?t=75",
+            description: "May 6, 2021 (platforms and applications)",
+        },
+        Link {
+            name: "Roc on Zig Showtime",
+            url: "https://youtu.be/FMyyYdFSOHA",
+            description: "April 24, 2021 (making a platform)",
+        },
+        Link {
+            name: "Roc at the Berlin FP Meetup",
+            url: "https://youtu.be/ZnYa99QoznE?t=4790",
+            description: "September 1, 2020 (overall vision for the language)",
+        },
+    ]
+}
 
 // This is intentionally a bad recursive fib to eat of compute time.
 fn fibonacci(n: u64) -> u64 {
@@ -88,7 +138,17 @@ async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
                 }
             }
         }
-        // TODO: add html template route
+        (&Method::GET, Some("template")) => {
+            let template = RocHomeTemplate { links: links() };
+            match template.render() {
+                Ok(body) => {
+                    *response.body_mut() = Body::from(body);
+                }
+                _ => {
+                    *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                }
+            }
+        }
         // TODO: add json encode and decode route
         // TODO: add DB access route (probably still mock with sleep but generate query or results)
         _ => *response.status_mut() = StatusCode::NOT_FOUND,
