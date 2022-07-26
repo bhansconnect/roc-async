@@ -21,5 +21,6 @@ roc_std = { path = "../../../roc/crates/roc_std" }
 hyper = { version = "0.14", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
 libc = "0.2"
+stackalloc = "1.2"
 
 [workspace]

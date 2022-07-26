@@ -86,18 +86,16 @@ async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
 
     unsafe {
         let size = roc_main_size() as usize;
-        let layout = Layout::array::<u8>(size).unwrap();
-        let buffer = std::alloc::alloc(layout);
+        stackalloc::alloca(size, |buffer| {
+            roc_main(buffer.as_mut_ptr() as *mut u8, &req);
 
-        roc_main(buffer, &req);
-
-        call_Main(
-            // This flags pointer will never get dereferenced
-            MaybeUninit::uninit().as_ptr(),
-            buffer,
-            &mut out,
-        );
-        std::alloc::dealloc(buffer, layout);
+            call_Main(
+                // This flags pointer will never get dereferenced
+                MaybeUninit::uninit().as_ptr(),
+                buffer.as_ptr() as *const u8,
+                &mut out,
+            );
+        })
     }
 
     // TODO: Look into directly supporting RocStr here to avoid the copy.
