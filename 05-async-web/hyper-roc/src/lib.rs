@@ -7,9 +7,11 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server};
 use tokio::runtime::Runtime;
 
+use roc_std::RocStr;
+
 extern "C" {
     #[link_name = "roc__mainForHost_1_exposed_generic"]
-    fn roc_main(output: *mut u8, x: i32);
+    fn roc_main(output: *mut RocStr, req: *const Request<Body>);
 
     #[link_name = "roc__mainForHost_size"]
     fn roc_main_size() -> i64;
@@ -69,12 +71,21 @@ pub unsafe extern "C" fn roc_memset(dst: *mut c_void, c: i32, n: usize) -> *mut 
     libc::memset(dst, c, n)
 }
 
-async fn root(_req: Request<Body>) -> Result<Response<Body>, Infallible> {
-    // TODO: run roc here
-    // It must deal with routing and running everything.
-    // It should return a status code and body.
-    let response = Response::new(Body::empty());
-    Ok(response)
+async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
+    // let size = roc_main_size() as usize;
+    // let layout = Layout::array::<u8>(size).unwrap();
+    // let buffer = std::alloc::alloc_zeroed(layout);
+    let mut out = RocStr::empty();
+
+    unsafe {
+        roc_main(&mut out, &req);
+    }
+    // let cont_ptr = call_continuation_closure(buffer);
+    // std::alloc::dealloc(buffer, layout);
+    // cont_ptr as usize
+
+    // TODO: Look into directly supporting RocStr here to avoid the copy.
+    Ok(Response::new(Body::from(out.as_str().to_owned())))
 }
 
 #[no_mangle]

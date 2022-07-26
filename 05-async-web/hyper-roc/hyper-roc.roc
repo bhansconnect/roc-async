@@ -3,5 +3,5 @@ app "hyper-roc"
     imports [pf.Effect.{Effect, always}]
     provides [main] to pf
 
-main = \x ->
-    always x
+main = \_req ->
+    always "Hello, World!"
