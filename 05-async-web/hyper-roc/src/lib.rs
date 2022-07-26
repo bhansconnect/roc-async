@@ -1,23 +1,24 @@
+use std::alloc::Layout;
 use std::convert::Infallible;
 use std::ffi::{c_void, CStr};
 use std::mem::MaybeUninit;
 use std::os::raw::c_char;
 
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Request, Response, Server};
+use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use tokio::runtime::Runtime;
 
 use roc_std::RocStr;
 
 extern "C" {
     #[link_name = "roc__mainForHost_1_exposed_generic"]
-    fn roc_main(output: *mut RocStr, req: *const Request<Body>);
+    fn roc_main(closure_data: *mut u8, req: *const Request<Body>);
 
     #[link_name = "roc__mainForHost_size"]
     fn roc_main_size() -> i64;
 
-    // #[link_name = "roc__mainForHost_1_Continuation_caller"]
-    // fn call_Cont(flags: *const u8, closure_data: *const u8, output: *mut *mut u8);
+    #[link_name = "roc__mainForHost_1_Main_caller"]
+    fn call_Main(flags: *const u8, closure_data: *const u8, output: *mut RocResponse);
 
     // #[link_name = "roc__mainForHost_1_MoreCont_caller"]
     // fn call_MoreCont(flags: *const i32, closure_data: *const u8, output: *mut u8);
@@ -71,21 +72,39 @@ pub unsafe extern "C" fn roc_memset(dst: *mut c_void, c: i32, n: usize) -> *mut 
     libc::memset(dst, c, n)
 }
 
+#[repr(C)]
+struct RocResponse {
+    body: RocStr,
+    status: u16,
+}
+
 async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
-    // let size = roc_main_size() as usize;
-    // let layout = Layout::array::<u8>(size).unwrap();
-    // let buffer = std::alloc::alloc_zeroed(layout);
-    let mut out = RocStr::empty();
+    let mut out = RocResponse {
+        body: RocStr::empty(),
+        status: 0,
+    };
 
     unsafe {
-        roc_main(&mut out, &req);
+        let size = roc_main_size() as usize;
+        let layout = Layout::array::<u8>(size).unwrap();
+        let buffer = std::alloc::alloc(layout);
+
+        roc_main(buffer, &req);
+
+        call_Main(
+            // This flags pointer will never get dereferenced
+            MaybeUninit::uninit().as_ptr(),
+            buffer,
+            &mut out,
+        );
+        std::alloc::dealloc(buffer, layout);
     }
-    // let cont_ptr = call_continuation_closure(buffer);
-    // std::alloc::dealloc(buffer, layout);
-    // cont_ptr as usize
 
     // TODO: Look into directly supporting RocStr here to avoid the copy.
-    Ok(Response::new(Body::from(out.as_str().to_owned())))
+    let mut resp = Response::new(Body::from(out.body.as_str().to_owned()));
+    *resp.status_mut() =
+        StatusCode::from_u16(out.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    Ok(resp)
 }
 
 #[no_mangle]
@@ -119,4 +138,34 @@ pub extern "C" fn rust_main() -> i32 {
     }
     // Exit code
     0
+}
+
+#[repr(C)]
+pub enum RocMethod {
+    Connect,
+    Delete,
+    Get,
+    Head,
+    Options,
+    Other,
+    Patch,
+    Post,
+    Put,
+    Trace,
+}
+
+#[no_mangle]
+pub extern "C" fn roc_fx_method(req: *const Request<Body>) -> RocMethod {
+    match unsafe { &*req }.method() {
+        &Method::CONNECT => RocMethod::Connect,
+        &Method::DELETE => RocMethod::Delete,
+        &Method::GET => RocMethod::Get,
+        &Method::HEAD => RocMethod::Head,
+        &Method::OPTIONS => RocMethod::Options,
+        &Method::PATCH => RocMethod::Patch,
+        &Method::POST => RocMethod::Post,
+        &Method::PUT => RocMethod::Put,
+        &Method::TRACE => RocMethod::Trace,
+        _ => RocMethod::Other,
+    }
 }
