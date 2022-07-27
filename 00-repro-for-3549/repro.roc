@@ -3,24 +3,15 @@ app "repro"
     imports [pf.Effect.{always}]
     provides [main] to pf
 
+i32More = \cont ->
+    I32More cont |> always
+
+f32More = \cont ->
+    F32More cont |> always
+
 main = \{} ->
-    # Broken
-    (I32More \x ->
-        (F32More \y ->
-            Done (x + (Num.round y)) |> always
-        ) |> always
-    ) |> always
-
-    # Functional due to not using F32More
-    # (I32More \x ->
-    #     (I32More \y ->
-    #         Done (x + y) |> always
-    #     ) |> always
-    # ) |> always
-
-    # Functional due to not using I32More
-    # (F32More \x ->
-    #     (F32More \y ->
-    #         Done (Num.round (x + y)) |> always
-    #     ) |> always
-    # ) |> always
+    x <- i32More
+    y <- f32More
+    a <- i32More
+    z <- f32More
+    Done (x + a + (Num.round (y + z))) |> always

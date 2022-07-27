@@ -11,23 +11,23 @@ extern "C" {
     #[link_name = "roc__mainForHost_size"]
     fn roc_main_size() -> usize;
 
-    #[link_name = "roc__mainForHost_1_Continuation_caller"]
+    #[link_name = "roc__mainForHost_1__Continuation_caller"]
     // The last field should be a pionter to a pionter, but we take it as a usize instead.
     fn call_Continuation(flags: *const u8, closure_data: *const u8, cont_ptr: *mut usize);
 
-    #[link_name = "roc__mainForHost_1_Continuation_result_size"]
+    #[link_name = "roc__mainForHost_1__Continuation_result_size"]
     fn size_Continuation_result() -> usize;
 
-    #[link_name = "roc__mainForHost_1_I32MoreCont_caller"]
+    #[link_name = "roc__mainForHost_1__I32MoreCont_caller"]
     fn call_I32MoreCont(flags: *const i32, closure_data: *const u8, output: *mut usize);
 
-    #[link_name = "roc__mainForHost_1_I32MoreCont_result_size"]
+    #[link_name = "roc__mainForHost_1__I32MoreCont_result_size"]
     fn size_I32MoreCont_result() -> usize;
 
-    #[link_name = "roc__mainForHost_1_F32MoreCont_caller"]
+    #[link_name = "roc__mainForHost_1__F32MoreCont_caller"]
     fn call_F32MoreCont(flags: *const f32, closure_data: *const u8, output: *mut usize);
 
-    #[link_name = "roc__mainForHost_1_F32MoreCont_result_size"]
+    #[link_name = "roc__mainForHost_1__F32MoreCont_result_size"]
     fn size_F32MoreCont_result() -> usize;
 }
 
