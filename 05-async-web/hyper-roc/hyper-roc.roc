@@ -113,8 +113,9 @@ main = \req ->
 # Are recursive functions with effects not allowed?
 # sleepRepsHelper = \delayMS, reps, sum ->
 #     if reps > 0 then
-#         future <- Effect.fakeDBCall delayMS |> after
-#         DBResult future (\res -> sleepRepsHelper delayMS (reps - 1) (sum + res)) |> always
+#         DBRequest delayMS (\res ->
+#             sleepRepsHelper delayMS (reps - 1) (sum + res)
+#         ) |> always
 #     else
 #         sumStr = Num.toStr sum
 #         Response {status: 200, body: "\(sumStr) Naps Completed"} |> always
