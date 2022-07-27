@@ -18,28 +18,28 @@ extern "C" {
     #[link_name = "roc__mainForHost_size"]
     fn roc_main_size() -> usize;
 
-    #[link_name = "roc__mainForHost_1_Continuation_caller"]
+    #[link_name = "roc__mainForHost_1__Continuation_caller"]
     // The last field should be a pionter to a pionter, but we take it as a usize instead.
     fn call_Continuation(flags: *const u8, closure_data: *const u8, cont_ptr: *mut usize);
 
-    #[link_name = "roc__mainForHost_1_Continuation_result_size"]
+    #[link_name = "roc__mainForHost_1__Continuation_result_size"]
     fn call_Continuation_result_size() -> usize;
 
-    #[link_name = "roc__mainForHost_1_DBRequestCont_caller"]
+    #[link_name = "roc__mainForHost_1__DBRequestCont_caller"]
     fn call_DBRequestCont(flags: *const u64, closure_data: *const u8, output: *mut usize);
 
-    #[link_name = "roc__mainForHost_1_DBRequestCont_result_size"]
+    #[link_name = "roc__mainForHost_1__DBRequestCont_result_size"]
     fn call_DBRequestCont_result_size() -> usize;
 
-    // #[link_name = "roc__mainForHost_1_LoadBodyCont_caller"]
-    // fn call_LoadBodyCont(
-    //     flags: *const RocResult<RocStr, ()>,
-    //     closure_data: *const u8,
-    //     output: *mut usize,
-    // );
+    #[link_name = "roc__mainForHost_1__LoadBodyCont_caller"]
+    fn call_LoadBodyCont(
+        flags: *const RocResult<RocStr, ()>,
+        closure_data: *const u8,
+        output: *mut usize,
+    );
 
-    // #[link_name = "roc__mainForHost_1_LoadBodyCont_result_size"]
-    // fn call_LoadBodyCont_result_size() -> usize;
+    #[link_name = "roc__mainForHost_1__LoadBodyCont_result_size"]
+    fn call_LoadBodyCont_result_size() -> usize;
 }
 
 #[repr(C)]
@@ -107,7 +107,7 @@ async fn fake_db_call(delay_ms: u64) -> u64 {
     1
 }
 
-async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
+async fn root(mut req: Request<Body>) -> Result<Response<Body>, Infallible> {
     let mut resp = Response::new(Body::from(""));
     let mut cont_ptr: usize = 0;
 
@@ -134,19 +134,19 @@ async fn root(req: Request<Body>) -> Result<Response<Body>, Infallible> {
                     let val = fake_db_call(delay_ms).await;
                     cont_ptr = call_DBRequestCont_closure(cont_ptr, val);
                 }
-                // 1 => {
-                //     // LoadBody
-                //     let result = match hyper::body::to_bytes(req.into_body()).await {
-                //         Ok(bytes) => RocResult::ok(RocStr::from_slice_unchecked(&bytes)),
-                //         _ => RocResult::err(()),
-                //     };
-                //     cont_ptr = call_LoadBodyCont_closure(cont_ptr, result);
-                //     // TODO: this has problems with ownership currently.
-                //     // Just error out and move on for now.
-                //     *resp.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-                //     break;
-                // }
                 1 => {
+                    // LoadBody
+                    // We steal the mody and replace it with an empty body.
+                    // Future calls to this method will get an empty string.
+                    let mut tmp_body = Body::from("");
+                    std::mem::swap(&mut tmp_body, req.body_mut());
+                    let result = match hyper::body::to_bytes(tmp_body).await {
+                        Ok(bytes) => RocResult::ok(RocStr::from_slice_unchecked(&bytes)),
+                        _ => RocResult::err(()),
+                    };
+                    cont_ptr = call_LoadBodyCont_closure(cont_ptr, result);
+                }
+                2 => {
                     // Response
                     let out_ptr = remove_tag(cont_ptr) as *const RocResponse;
                     *resp.status_mut() = StatusCode::from_u16((&*out_ptr).status)
@@ -191,29 +191,29 @@ unsafe fn call_DBRequestCont_closure(args_and_data_ptr: usize, val: u64) -> usiz
     cont_ptr
 }
 
-// unsafe fn call_LoadBodyCont_closure(data_ptr: usize, result: RocResult<RocStr, ()>) -> usize {
-//     let closure_data_ptr = remove_tag(data_ptr);
-//     let mut cont_ptr: usize = 0;
+unsafe fn call_LoadBodyCont_closure(data_ptr: usize, result: RocResult<RocStr, ()>) -> usize {
+    let closure_data_ptr = remove_tag(data_ptr);
+    let mut cont_ptr: usize = 0;
 
-//     call_LoadBodyCont(
-//         &result,
-//         closure_data_ptr as *const u8,
-//         // buffer.as_mut_ptr() as *mut u8,
-//         &mut cont_ptr,
-//     );
-//     deallocate_refcounted_tag(data_ptr);
+    call_LoadBodyCont(
+        &result,
+        closure_data_ptr as *const u8,
+        // buffer.as_mut_ptr() as *mut u8,
+        &mut cont_ptr,
+    );
+    deallocate_refcounted_tag(data_ptr);
 
-//     // TODO: With nested continuations, this may need to be used.
-//     // Ran into issues related to it in the 04-nested-future-continuations
-//     // call_Continuation(
-//     //     // This flags pointer will never get dereferenced
-//     //     MaybeUninit::uninit().as_ptr(),
-//     //     buffer.as_ptr() as *const u8,
-//     //     &mut cont_ptr,
-//     // );
+    // TODO: With nested continuations, this may need to be used.
+    // Ran into issues related to it in the 04-nested-future-continuations
+    // call_Continuation(
+    //     // This flags pointer will never get dereferenced
+    //     MaybeUninit::uninit().as_ptr(),
+    //     buffer.as_ptr() as *const u8,
+    //     &mut cont_ptr,
+    // );
 
-//     cont_ptr
-// }
+    cont_ptr
+}
 
 #[no_mangle]
 pub extern "C" fn rust_main() -> i32 {
@@ -221,14 +221,14 @@ pub extern "C" fn rust_main() -> i32 {
         unsafe { call_Continuation_result_size() },
         std::mem::size_of::<*const c_void>()
     );
-    assert_eq!(
-        unsafe { call_DBRequestCont_result_size() },
+    assert!(
+        unsafe { call_DBRequestCont_result_size() } <=
         std::mem::size_of::<*const c_void>()
     );
-    // assert_eq!(
-    //     unsafe { call_LoadBodyCont_result_size() },
-    //     std::mem::size_of::<*const c_void>()
-    // );
+    assert!(
+        unsafe { call_LoadBodyCont_result_size() } <=
+        std::mem::size_of::<*const c_void>()
+    );
     unsafe {
         RT = MaybeUninit::new(
             tokio::runtime::Builder::new_multi_thread()
