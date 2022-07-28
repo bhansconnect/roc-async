@@ -148,11 +148,14 @@ async fn root(mut req: Request<Body>) -> Result<Response<Body>, Infallible> {
                 }
                 2 => {
                     // Response
-                    let out_ptr = remove_tag(cont_ptr) as *const RocResponse;
+                    let out_ptr = remove_tag(cont_ptr) as *mut RocResponse;
                     *resp.status_mut() = StatusCode::from_u16((&*out_ptr).status)
                         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
                     // TODO: Look into directly supporting RocStr here to avoid the copy.
                     *resp.body_mut() = Body::from((&*out_ptr).body.as_str().to_owned());
+                    // Dropping doesn't work right with pointers to types.
+                    // Work around that.
+                    std::ptr::drop_in_place(out_ptr);
                     break;
                 }
                 _ => {
@@ -221,14 +224,8 @@ pub extern "C" fn rust_main() -> i32 {
         unsafe { call_Continuation_result_size() },
         std::mem::size_of::<*const c_void>()
     );
-    assert!(
-        unsafe { call_DBRequestCont_result_size() } <=
-        std::mem::size_of::<*const c_void>()
-    );
-    assert!(
-        unsafe { call_LoadBodyCont_result_size() } <=
-        std::mem::size_of::<*const c_void>()
-    );
+    assert!(unsafe { call_DBRequestCont_result_size() } <= std::mem::size_of::<*const c_void>());
+    assert!(unsafe { call_LoadBodyCont_result_size() } <= std::mem::size_of::<*const c_void>());
     unsafe {
         RT = MaybeUninit::new(
             tokio::runtime::Builder::new_multi_thread()
